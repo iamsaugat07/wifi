@@ -37,7 +37,6 @@ dependencies:
   permission_handler: ^10.2.0
   wifi_scan: ^0.4.1+2
   hooks_riverpod: ^2.6.1
-  location: ^5.0.3
 
 
 dev_dependencies:
