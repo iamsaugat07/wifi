@@ -1,34 +1,41 @@
-// State class for WiFi scan
-import 'package:wifi_scan/wifi_scan.dart';
-
+// State class for WiFi
 class WiFiScanState {
-  final List<WiFiAccessPoint> accessPoints;
+  final String? currentSSID;
+  final String? ipAddress;
+  final List<dynamic> availableNetworks;
   final bool isScanning;
+  final bool isConnecting;
   final bool permissionDenied;
-  final bool locationServiceDisabled;
   final String statusMessage;
 
   WiFiScanState({
-    this.accessPoints = const [],
+    this.currentSSID,
+    this.ipAddress,
+    this.availableNetworks = const [],
     this.isScanning = false,
+    this.isConnecting = false,
     this.permissionDenied = false,
-    this.locationServiceDisabled = false,
     this.statusMessage = "Initializing...",
   });
 
+  get accessPoints => null;
+
   WiFiScanState copyWith({
-    List<WiFiAccessPoint>? accessPoints,
+    String? currentSSID,
+    String? ipAddress,
+    List<dynamic>? availableNetworks,
     bool? isScanning,
+    bool? isConnecting,
     bool? permissionDenied,
-    bool? locationServiceDisabled,
     String? statusMessage,
   }) {
     return WiFiScanState(
-      accessPoints: accessPoints ?? this.accessPoints,
+      currentSSID: currentSSID ?? this.currentSSID,
+      ipAddress: ipAddress ?? this.ipAddress,
+      availableNetworks: availableNetworks ?? this.availableNetworks,
       isScanning: isScanning ?? this.isScanning,
+      isConnecting: isConnecting ?? this.isConnecting,
       permissionDenied: permissionDenied ?? this.permissionDenied,
-      locationServiceDisabled:
-          locationServiceDisabled ?? this.locationServiceDisabled,
       statusMessage: statusMessage ?? this.statusMessage,
     );
   }

@@ -1,139 +1,190 @@
-// Riverpod notifier for managing WiFi scan state
-import 'package:flutter/material.dart';
+// Notifier for WiFi state
+import 'dart:io';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:wifi_scan/wifi_scan.dart';
+import 'package:wifihackerapp/wifi_manager.dart';
 import 'package:wifihackerapp/wifi_scan_state.dart';
 
-class WiFiScanNotifier extends StateNotifier<WiFiScanState> {
-  WiFiScanNotifier() : super(WiFiScanState());
+class WiFiNotifier extends StateNotifier<WiFiScanState> {
+  final PlatformWiFiManager _manager = WiFiManagerFactory.getManager();
+  
+  WiFiNotifier() : super(WiFiScanState()) {
+    _initialize();
+  }
 
-  Future<void> initializeWiFiScan(BuildContext context) async {
+  Future<void> _initialize() async {
     state = state.copyWith(
       statusMessage: "Checking permissions...",
-      isScanning: true,
     );
 
-    // // Check if location services are enabled
-    // bool locationEnabled = await _checkLocationServices();
-    // if (!locationEnabled) {
-    //   state = state.copyWith(
-    //     locationServiceDisabled: true,
-    //     statusMessage: "Location services are disabled",
-    //     isScanning: false,
-    //   );
-    //   return;
-    // }
-
-    // Request permissions properly
-    bool permissionsGranted = await _requestPermissions(context);
-    if (!permissionsGranted) {
+    // Check permissions
+    PermissionStatus locationStatus = await Permission.locationWhenInUse.status;
+    
+    if (locationStatus.isDenied || locationStatus.isPermanentlyDenied) {
       state = state.copyWith(
         permissionDenied: true,
-        statusMessage: "Required permissions not granted",
-        isScanning: false,
+        statusMessage: "Location permission required",
       );
       return;
     }
 
-    // Permissions are granted, start scanning
-    await _startWiFiScan();
+    // Get current WiFi info
+    await refreshWiFiInfo();
+    
+    // If on Android, scan for networks
+    if (Platform.isAndroid) {
+      await scanForNetworks();
+    }
   }
 
-  // Future<bool> _checkLocationServices() async {
-  //   // Check if location services are enabled
-  //   final info = NetworkInfo();
-  //   try {
-  //     await info.getLocationServiceAuthorization();
-  //     return true;
-  //   } catch (e) {
-  //     print("Location services error: $e");
-  //     return false;
-  //   }
-  // }
+  Future<void> requestPermissions() async {
+    state = state.copyWith(
+      statusMessage: "Requesting permissions...",
+    );
 
-  Future<bool> _requestPermissions(BuildContext context) async {
-    // Determine which permissions to request based on platform and version
-    List<Permission> requiredPermissions = [];
-
-    // Always need location permission
-    requiredPermissions.add(Permission.location);
-
-    // Check Android SDK version for additional permissions
-    if (Theme.of(context).platform == TargetPlatform.android) {
-      // Add nearby devices permission for Android 12+
-      if (await _isAndroid12OrHigher()) {
-        requiredPermissions.add(Permission.nearbyWifiDevices);
+    PermissionStatus locationStatus = await Permission.locationWhenInUse.request();
+    
+    if (locationStatus.isGranted) {
+      // Additional Android permissions for Android 12+
+      if (Platform.isAndroid) {
+        await Permission.nearbyWifiDevices.request();
       }
+      
+      state = state.copyWith(
+        permissionDenied: false,
+      );
+      
+      await refreshWiFiInfo();
+      
+      if (Platform.isAndroid) {
+        await scanForNetworks();
+      }
+    } else {
+      state = state.copyWith(
+        permissionDenied: true,
+        statusMessage: "Location permission denied",
+      );
+    }
+  }
+
+  Future<void> refreshWiFiInfo() async {
+    state = state.copyWith(
+      statusMessage: "Getting WiFi information...",
+    );
+
+    final wifiInfo = await _manager.getCurrentWiFiInfo();
+    
+    if (wifiInfo.containsKey('error')) {
+      state = state.copyWith(
+        statusMessage: "Error: ${wifiInfo['error']}",
+      );
+      return;
     }
 
-    // Request all required permissions
-    Map<Permission, PermissionStatus> statuses =
-        await requiredPermissions.request();
-
-    // Check if all permissions are granted
-    bool allGranted = true;
-    statuses.forEach((permission, status) {
-      if (!status.isGranted) {
-        allGranted = false;
-        print("Permission not granted: $permission");
-      }
-    });
-
-    return allGranted;
+    state = state.copyWith(
+      currentSSID: wifiInfo['ssid'],
+      ipAddress: wifiInfo['ipAddress'],
+      statusMessage: wifiInfo['ssid'] != null 
+          ? "Connected to: ${wifiInfo['ssid']}" 
+          : "Not connected to any WiFi network",
+    );
   }
 
-  Future<bool> _isAndroid12OrHigher() async {
-    // In a real app, you'd check the Android SDK version
-    // This is a simplified check - use a proper platform info package
-    return true; // Assume Android 12+ for safety
-  }
+  Future<void> scanForNetworks() async {
+    if (Platform.isIOS) {
+      state = state.copyWith(
+        statusMessage: "WiFi scanning not available on iOS",
+      );
+      return;
+    }
 
-  Future<void> _startWiFiScan() async {
     state = state.copyWith(
       isScanning: true,
       statusMessage: "Scanning for WiFi networks...",
     );
 
-    // Initialize WiFi scan
-    final wifiScan = WiFiScan.instance;
-    final canScan = await wifiScan.canStartScan();
-
-    if (canScan != CanStartScan.yes) {
-      state = state.copyWith(
-        isScanning: false,
-        statusMessage: "Cannot scan for WiFi: ${canScan.toString()}",
-      );
-      return;
-    }
-
-    // Start scan
-    final result = await wifiScan.startScan();
-    if (!result) {
-      state = state.copyWith(
-        isScanning: false,
-        statusMessage: "Failed to start WiFi scan",
-      );
-      return;
-    }
-
-    // Get scan results
-    final accessPoints = await wifiScan.getScannedResults();
-
+    final networks = await _manager.scanForNetworks();
+    
     state = state.copyWith(
-      accessPoints: accessPoints,
+      availableNetworks: networks,
       isScanning: false,
-      statusMessage: accessPoints.isEmpty
-          ? "No WiFi networks found"
-          : "Found ${accessPoints.length} networks",
+      statusMessage: networks.isEmpty || (networks.length == 1 && networks[0] is Map && networks[0].containsKey('error'))
+          ? "No networks found"
+          : "Found ${networks.length} networks",
     );
   }
 
-  void resetPermissionDenied() {
-    state = state.copyWith(permissionDenied: false);
+  Future<void> connectToNetwork(String ssid, {String? password}) async {
+    if (Platform.isIOS) {
+      await openWiFiSettings();
+      return;
+    }
+
+    state = state.copyWith(
+      isConnecting: true,
+      statusMessage: "Connecting to $ssid...",
+    );
+
+    final result = await _manager.connectToNetwork(ssid, password: password);
+    
+    if (result) {
+      state = state.copyWith(
+        isConnecting: false,
+        currentSSID: ssid,
+        statusMessage: "Connected to $ssid",
+      );
+      
+      // Refresh to get updated info
+      await Future.delayed(Duration(seconds: 2));
+      await refreshWiFiInfo();
+    } else {
+      state = state.copyWith(
+        isConnecting: false,
+        statusMessage: "Failed to connect to $ssid",
+      );
+    }
   }
 
-  void resetLocationServiceDisabled() {
-    state = state.copyWith(locationServiceDisabled: false);
+  Future<void> disconnectFromNetwork() async {
+    if (Platform.isIOS) {
+      await openWiFiSettings();
+      return;
+    }
+
+    state = state.copyWith(
+      isConnecting: true,
+      statusMessage: "Disconnecting...",
+    );
+
+    final result = await _manager.disconnectFromNetwork();
+    
+    if (result) {
+      state = state.copyWith(
+        isConnecting: false,
+        currentSSID: null,
+        statusMessage: "Disconnected",
+      );
+      
+      // Refresh to get updated info
+      await Future.delayed(Duration(seconds: 2));
+      await refreshWiFiInfo();
+    } else {
+      state = state.copyWith(
+        isConnecting: false,
+        statusMessage: "Failed to disconnect",
+      );
+    }
+  }
+
+  Future<void> openWiFiSettings() async {
+    state = state.copyWith(
+      statusMessage: "Opening WiFi settings...",
+    );
+
+    await _manager.openWiFiSettings();
+    
+    // Refresh after returning from settings
+    await Future.delayed(Duration(seconds: 3));
+    await refreshWiFiInfo();
   }
 }
